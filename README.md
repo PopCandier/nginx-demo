@@ -532,3 +532,110 @@ http {
 那么**反向代理，顾名思义，就是运行在服务端的程序**。
 
 ![1614605393722](./img/1614605393722.png)
+
+##### 关于反向代理的配置
+
+由于反向代理是代理服务器，反向代理的效果就是，我请求一个代理方的地址，他会帮我想目标地址请求地址。
+
+我们可以创建一个springboot项目，然后创建一个地址，随便什么地址，只要能够保证访问就行。
+
+```java
+@RestController
+public class NginxController{
+    @RequestMapping("user/query")
+    public String query(HttpSerlvetRequest request){
+        return "nice";
+    }
+}
+```
+
+假设我们现在这个springboot所在的地址是`192.168.44.1:9096`，也就是说我们使用`192.168.44.1:9096/user/query`页面上就会返回nice字样。但是因为某些原因，以上的地址我们使用让我们无法访问。这个时候，我们的反向代理，也就是nginx所在地址是`192.168.44.181`，而nginx可以访问`192.168.44.1`的服务，所以我们希望在网址上输入`192.168.44.1/user/query`,虽然不是真正服务器的地址，但是还是会返回nice字样。
+
+我们回到nginx的地方进行配置。
+
+```properties
+server {
+        listen       80;
+        # nginx 所在的位置，只要服务器和这个匹配就会进入这个server块
+        server_name  192.168.44.1;
+        location / {
+        # 非常重要的属性，用于表示被代理的地址，反向代理的位置，所有的请求都会被转发到这个地址
+            proxy_pass http://192.168.44.1:9096;
+        }
+    }
+
+```
+
+启动nginx即可。
+
+```properties
+location / {
+	// location 的路由规则    
+}
+```
+
+| 模式                 | 含义                                                         |
+| -------------------- | ------------------------------------------------------------ |
+| location = /uri      | = 表示精准匹配，只有完全匹配上才能生效                       |
+| location ^~ /uri     | ^~ 开头对URL路径进行前缀匹配，并且在正则之前                 |
+| localtion ~pattern   | 开头表示区分大小写的正则匹配                                 |
+| localtion ~* pattern | 开头表示不区别大小写的正则表达式                             |
+| location /uri        | 不带任何修饰符，也表示前缀匹配，但是在正则匹配之后           |
+| localtion /          | 通用匹配，任何匹配到其他location的请求都会匹配到，相当于switch 中的 default |
+
+优先级从高到底。
+
+所以其实就是nginx帮你发一个请求而已。所以在nginx帮你转发请求的时候，其实可以做一些特别的事情。
+
+例如nginx可以帮你把一个get请求改变成post请求。比如你发送给nginx服务器是一个get请求，只需要在server块中加上这样一句话，就可以改成post请求。
+
+```properties
+server {
+        listen       80;
+        # nginx 所在的位置，只要服务器和这个匹配就会进入这个server块
+        server_name  192.168.44.1;
+        location / {
+        # 非常重要的属性，用于表示被代理的地址，反向代理的位置，所有的请求都会被转发到这个地址
+            proxy_pass http://192.168.44.1:9096;
+            # 修改请求类型
+            proxy_method POST;
+        }
+    }
+```
+
+本质上，我们作为客户端想nginx发送了一次请求，然后nginx作为客户端再发送了一次请求，那么这里就会有一个问题，由于到真正服务器的上是由nginx发送的，所以会丢失一些我们作为真正发送者的信息，所以我们希望在nginx转发的时候，能够保存我们原始的信息。
+
+```properties
+server {
+        listen       80;
+        # nginx 所在的位置，只要服务器和这个匹配就会进入这个server块
+        server_name  192.168.44.1;
+        location / {
+        # 非常重要的属性，用于表示被代理的地址，反向代理的位置，所有的请求都会被转发到这个地址
+            proxy_pass http://192.168.44.1:9096;
+            # 修改请求类型
+            proxy_method POST;
+            # 前面是变量名，后面是值
+            # host地址
+            proxy_set_header Host $host;
+            # 调用地址
+            proxy_set_header X-Real-IP $remote_addr;
+            # ip列表
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+    }
+```
+
+我们可以通过自定义的变量来存储这些值。$开头是nginx内置的变量。
+
+到服务端获取。
+
+```java
+@RequestMapping("user/query")
+public String query(HttpServletRequest request){
+    //从request header 中获取
+    System.out.println("客户端IP"+request.getHeader("X-Real-IP"));
+    System.out.println("X-Forwarded-For"+request.getHeader("X-Forwaded-For"));
+}
+```
+
