@@ -660,3 +660,158 @@ public String query(HttpServletRequest request){
 }
 ```
 
+##### 负载均衡
+
+![1614605393722](./img/1614605393722.png)
+
+如何在nginx配置负载均衡。
+
+```properties
+server {
+    listen  80;
+    server_name localhost;
+    location / {
+    	# 后面的 test 是服务器组的配置
+        proxy_pass http://test
+    }
+}
+# 你可以在test 只是一个别名
+upstream test {
+    server 192.168.44.1:12673;
+    server 192.168.44.1:12674;
+    server 192.168.44.1:12675;
+}
+```
+
+以上配置就可以实现负载均衡，但是如果你只是这样写的，就会启动默认得负载均衡策略。
+
+upstream 模块默认算法是`wrr`(权重轮询 weighted round-robin)
+
+我们可以启动三个tomcat，进行多次访问，会发现启动的三个服务器都有被访问到，唯一的问题在于，这个访问是有点随机的。除此之外upstream模块地server还有其他的属性。
+
+```properties
+upstream tomcats{
+    server 192.168.44.168:2673 weight=2 max_fails=3 fail_timeout=15;
+    server 192.168.44.168:2674 weight=3;
+    server 192.168.44.168:2675 weight=1;
+    server 192.168.44.168:2675 down;
+    server 192.168.44.166:2677 backup;
+}
+```
+
+| 配置块名称   | 作用                                                         |
+| ------------ | ------------------------------------------------------------ |
+| weight       | 默认为1，weight越大，负载的权重就越大，比如三台服务器权重分别为1、2、3，接受请求的比例分别为1/6,2/6,3/6。 |
+| max_conns    | 限制分配给某台server处理得最大连接数，超过这个数量，将不会分配新的连接给他，默认为0，表示不限制 |
+| max_fails    | 默认为1，某台server允许请求失败的次数，超过最大次数后，在fail_timeout时间内，新的请求将不会分配给这台机器。 |
+| fail_timeout | 默认10秒。代表如果这台max_fails失败后，在fail_timeout得期间内，nginx会认为这台server暂时不可用，不会分配请求给他。 |
+| backup       | 其它所有非backup机器down或者忙碌无法接收请求的时候，会分配给backup机器 |
+| down         | 表示当前机器暂时不参与负载均衡，表示暂时下架。               |
+
+##### 其它Nginx内置负载均衡策略
+
+**ip_hash**
+
+Nginx会根据客户端IP的结果选择一个真实的服务器，保证后续的该客户端的每次请求都会落到这台真实的服务器上，这就避免了我们不用解决session共享的问题，如果每次都会落到不同的服务器上，由于新服务器对该请求是陌生的，所以会创建新的session，这其实就意味着丢失了原的会话了，这样的ip_hash将会固定请求落到同一台服务器上，不需要解决session问题。
+
+```properties
+upstream test{
+    ip_hash;
+    server 192.168.44.1:12673;
+    server 192.168.44.1:12674;
+    server 192.168.44.1:12675;
+}
+```
+
+**least_conn**
+
+选取活跃连接数和权重weight的比值最小者成为下一个请求者的server(当前活跃度越小，权重越大，越优先选择)。上一次已选的server和已达成最大连接数的server不再选择范围内。也就意味着，如果你的服务器没有配置weight属性属性，这个策略将会没有意义。
+
+```properties
+upstream backend {
+    zone backends 64k;
+    least_conn;
+    server 10.10.10.2 weight=2;
+    server 10.10.10.4 weight=1;
+    server 10.10.10.6 weight=1; 
+}
+```
+
+**第三方负载策略**
+
+由于nginx是用c语言编写，其实现在也有很多开发者为nginx写过很多组件，这个负载均衡组件-`fair`就是其中之一，中文名叫`公平`，其它类似的模块安装方法可以参考。
+
+建议先备份一下Nginx。
+
+这里涉及到两个路径：
+/usr/local/soft/nginx-1.18.0是源码路径。
+/usr/local/soft/nginx/是安装编译后的路径。
+
+## 1、下载解压
+
+放在编译后的路径或者源码路径都可以。
+
+```
+cd /usr/local/soft/nginx/modules
+wget https://files.cnblogs.com/files/ztlsir/nginx-upstream-fair-master.zip
+tar -zxvf nginx-upstream-fair-master.zip
+```
+
+
+
+## 2、备份nginx启动文件
+
+把编译后路径的脚本备份一下。
+
+```
+cd /usr/local/soft/nginx/sbin
+cp nginx nginx.bak
+```
+
+## 3、在nginx原解压根目录下add module
+
+注意，如果之前已经启用了、添加了其他的模块，需要把–add-module的参数加在最后面。
+先查看之前的启动参数：
+
+```
+./nginx -V
+cd /usr/local/soft/nginx-1.18.0
+./configure --prefix=/usr/local/soft/nginx --add-module=/usr/local/soft/nginx/modules/nginx-upstream-fair-master
+```
+
+## 4、在nginx原解压根目录下 make，确保没有错误
+
+```
+cd /usr/local/soft/nginx-1.18.0
+make
+```
+
+## 5、检查是否安装成功
+
+```
+cd /usr/local/soft/nginx-1.18.0/objs/
+./nginx -V
+```
+
+## 6、复制objs目录下的nginx文件到sbin目录，覆盖原文件
+
+```
+cp -rf nginx /usr/local/soft/nginx/sbin/
+```
+
+## 7、重启Nginx
+
+```
+./nginx -c /usr/local/soft/nginx/conf/nginx-load.conf
+```
+
+Nginx配置：
+
+```
+    upstream ecif {
+        fair;
+        server 192.168.44.1:12673;
+        server 192.168.44.1:12674;
+        server 192.168.44.1:12675;
+    }
+```
