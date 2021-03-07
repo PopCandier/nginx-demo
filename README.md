@@ -815,3 +815,181 @@ Nginx配置：
         server 192.168.44.1:12675;
     }
 ```
+
+##### Nginx 实现HTTP缓存
+
+###### CDN 的解释
+
+一.背景
+业务开发中了解到获取很多数据都需要通过CDN来实现，比如我想拿一条数据，调用CDN的接口，结果返回给我一个List，其中每个都一样。这是为什么呢，带着这样的疑问，打算了解，介绍一下CDN的概念，使用。
+
+
+二.CDN概念介绍
+CDN的全称是Content Delivery Network，即内容分发网络。CDN是构建在现有网络基础之上的智能虚拟网络，依靠部署在各地的边缘服务器，通过中心平台的负载均衡、内容分发、调度等功能模块，使用户就近获取所需内容，降低网络拥塞，提高用户访问响应速度和命中率。
+
+是什么：构建在现有网络基础之上的智能虚拟网络
+怎么用：依靠部署在各地的边缘服务器，通过中心平台的负载均衡、内容分发、调度等功能模块
+好处：就近获取所需内容，降低网络拥塞，提高用户访问响应速度和命中率
+
+工作流程可以总结为：当用户访问已经加入CDN服务的网站时，首先通过DNS重定向技术确定最接近用户的最佳CDN节点，同时将用户的请求指向该节点。当用户的请求到达指定节点时，CDN的服务器（节点上的高速缓存）负责将用户请求的内容提供给用户。具体流程为: 用户在自己的浏览器中输入要访问的网站的域名，浏览器向本地DNS请求对该域名的解析，本地DNS将请求发到网站的主DNS，主DNS根据一系列的策略确定当时最适当的CDN节点，并将解析的结果（IP地址）发给用户，用户向给定的CDN节点请求相应网站的内容。
+
+
+三.CDN的原理
+有一道经典面试题：输入www.baidu.com后会发生什么？
+这道题就是先dns解析拿ip地址，再从应用层生成http请求一直到物理层传输，再到服务端一层一层拆包处理，最后返回html页面。具体可以看本人的文章：计算机网络部分
+
+
+网站接入CDN之后
+
+
+①当用户点击网站页面上的内容URL，经过本地DNS系统解析，DNS系统会最终将域名的解析权交给CNAME指向的CDN专用DNS服务器。
+
+②CDN的DNS服务器将CDN的全局负载均衡设备IP地址返回用户。
+
+③用户向CDN的全局负载均衡设备发起内容URL访问请求。
+
+④CDN全局负载均衡设备根据用户IP地址，以及用户请求的内容URL，选择一台用户所属区域的区域负载均衡设备，告诉用户向这台设备发起请求。
+
+⑤区域负载均衡设备会为用户选择一台合适的缓存服务器提供服务，选择的依据包括：根据用户IP地址，判断哪一台服务器距用户最近；根据用户所请求的URL中携带的内容名称，判断哪一台服务器上有用户所需内容；查询各个服务器当前的负载情况，判断哪一台服务器尚有服务能力。基于以上这些条件的综合分析之后，区域负载均衡设备会向全局负载均衡设备返回一台缓存服务器的IP地址。
+
+⑥全局负载均衡设备把服务器的IP地址返回给用户。
+
+⑦用户向缓存服务器发起请求，缓存服务器响应用户请求，将用户所需内容传送到用户终端。如果这台缓存服务器上并没有用户想要的内容，而区域均衡设备依然将它分配给了用户，那么这台服务器就要向它的上一级缓存服务器请求内容，直至追溯到网站的源服务器将内容拉到本地。
+
+总结
+CDN网络是在用户和服务器之间增加Cache层，如何将用户的请求引导到Cache上获得源服务器的数据，主要是通过接管DNS实现。Cache可能是公司的一个中转设备，也可能是外界CDN服务商提供的服务器。
+
+**回到nginx实现http缓存这里**
+
+nginx的http缓存其实像是为服务器缓存了一个结果而已，你可以为请求服务器的若干个结果生成若干个key，方便命中缓存，同时你也可以设定缓存的淘汰机制，还有大小和过期时间之类的。
+
+所以nginx的http缓存其实是web服务器中又一种特殊的缓存，但是我这里还是想说，如果你的服务器性能不是很好，还是不推荐你运行这么多程序还提供这么复杂的功能。
+
+![1615120547111](./img/1615120547111.png)
+
+nginx的缓存其实也是也有自己缓存位置，所以我们一开始需要创建来存放这些缓存的地方。
+
+```properties
+mkdir -p /data/nginx/cache
+```
+
+然后我们需要在nginx的启动文件里添加如下配置，这个配置需要写在`include`的前面，一个proxy_cache_path一个是proxy_cache，一个表示缓存路径，一个是缓存的相关配置
+
+```properties
+#user  nobody;
+worker_processes  1;
+
+#error_log  logs/error.log;
+#error_log  logs/error.log  notice;
+#error_log  logs/error.log  info;
+
+#pid        logs/nginx.pid;
+
+
+events {
+    worker_connections  1024;
+}
+
+
+http {
+	## 添加在这里 --- start
+	proxy_cache_path /data/nginx/cache levels=1:2 keys_zone=pop_cache:50m inactive=10m max_size=1g;
+	## 添加在这里 --- end
+    include       mime.types;
+    default_type  application/octet-stream;
+```
+
+| 参数             | 作用                                                         |
+| ---------------- | ------------------------------------------------------------ |
+| proxy_cache_path | 缓存文件路径，其中的文件名是cache_key的MD5                   |
+| levels           | 表示缓存目录下的层级目录结构，它是根据哈希后的请求URL地址创建的，目录名称从哈希后的字符结尾处开始截取。假设河西后的请求链接地址为4c45...dda7e5，则levels=1:2表示，第1层子目录的名称是长度为1的字符5，第二层子目录的名称是长度为2的字符7e![1615121478206](./img/1615121478206.png) |
+| keys_zone        | 指定缓存区名称及内存大小，在共享内存中设置一块存储区域来存放缓存的key和metadata(类似使用次数)，这样nginx可以快读判断一个request是否命中或者未命中缓存，1m可以缓存8000个key，10m可以存储80000个key |
+| inactive         | 表示主动清空在指定时间内未被访问的缓存，10m代表10分钟        |
+| max_size         | 最大的cache磁盘空间，如果不指定，会使用掉所有的disk space，当到达配额后，会删除最少使用的cache。 |
+
+在上面配置完成后，我们需要在location 里面使用
+
+```properties
+location / {
+    proxy_pass http://192.168.xx.xx:9096;
+    # 使用前面定义的缓存内存对象
+    proxy_cache pop_cache;
+    # 需要忽略的项
+    proxy_ignore_headers Expires Set-Cookie;
+    # 对于 200 和 304 的响应码进行缓存，过期时间为1分钟，这会覆盖前面定义的10分钟过期时间。
+    proxy_cache_valid 200 304 1m;
+    # 设置缓存的key，nginx会根据这个公式换算成对应缓存key
+    proxy_cache_key $host$uri$is_args$args;
+    # 在返回的响应里面添加响应头 X-Proxy-Cache 其值表示是否命中了缓存
+    add_header X-Proxy-Cache $upstream_cache_status;
+}
+```
+
+| 状态              | 含义                                                         |
+| ----------------- | ------------------------------------------------------------ |
+| proxy_cache       | 当前定义的共享内存区域名称                                   |
+| proxy_cache_key   | 缓存key的组合规划。比如：以域名、URI、参数组成的Web缓存的key值：$host$uri$is_args$args |
+| proxy_cache_valid | 对不同的HTTP状态码设置不同的缓存时间，可以有多个#其它未设置的状态码缓存1分钟。proxy_cache_valid any 1m |
+| proxy_set_header  | 定义http header 头，用于发送后代真实服务器，如果之前设置的真实的IP的案例。 |
+| add_header        | 响应数据给客户端需要添加的头信息。                           |
+
+![1615122332822](./img/1615122332822.png)
+
+| 状态        | 含义                                                         |
+| ----------- | ------------------------------------------------------------ |
+| MISS        | 未命中缓存，请求真实的服务器                                 |
+| HIT         | 命中缓存                                                     |
+| EXPIRED     | 正在更新的缓存，将使用旧的应答                               |
+| BYPASS      | 缓存被绕过了(可通过proxy_cache_bypass指令配置)               |
+| STALE       | 无法从后代服务器更新时，返回了旧的缓存内容(可通过proxy_cache_use_stale指令配置) |
+| UPDATING    | 内容过期了，因为相对于之前的请求，响应的入口(entry)已更新，并且proxy_cache_use_stale的updating已经被设置 |
+| REVALIDATED | 启动proxy_cache_revalidate 指令后，当缓存内容过期时，Nginx通过一次if-Modified-Since的请求头去验证缓存内容是否过期，此时后返回该状态。 |
+
+在缓存主动清理，即使服务器宕机，也会发拿回旧的内容，但是总比什么都没有强。
+
+想要校验的话，你可以在请求的方法里面写上时间返回，查看时间有没有变动。
+
+###### 缓存主动清理
+
+nginx里面不提供主动清理缓存的功能的，所以默认情况下，缓存会在磁盘空间用满的情况下被动删除。如果说一个地方的数据更新了，而Nginx还是旧地内容的话，数据就不准确了。
+
+这里需要用到nginx的第三方模块ngx_cache_purge;
+
+```properties
+# 1、下载解压
+cd /usr/local/soft/nginx/modules
+wget http://labs.frickle.com/files/ngx_cache_purge-2.3.tar.gz
+tar -zxvf ngx_cache_purge-2.3.tar.gz
+
+# 2、备份nginx启动文件
+cd /usr/local/soft/nginx/sbin
+cp nginx nginx.bak
+#3、在nginx原解压目录下 add module
+cd /usr/local/soft/nginx-1.18.0
+./configure --prefix=/usr/local/soft/nginx --add-module=/usr/local/soft/nginx/modules/ngx_cache_purge-2.3
+#4、在nginx原解压目录下make，确保没有错误
+make
+#5、检查是否安装成功
+cd /usr/local/soft/nginx-1.18.0/objs
+./nginx -V
+#6、复制objs目录下的nginx文件到sbin目录
+cp -rf nginx /usr/local/soft/nginx/sbin/
+#7、重启Nginx
+./nginx -c /usr/local/soft/nginx/conf/nginx-load.conf
+```
+
+接着在后面的配置追加
+
+```properties
+location ~/purge(/.*){
+ 	allow all;
+    proxy_cache_purge pop_cahce $host$uri$is_args$args;
+}
+```
+
+如果你的地址是`http://XXX/time/query`，想要删除这个的缓存，就前面加上/purge即，`http://XXX/purge/time/query`
+
+![1615123482863](./img/1615123482863.png)
+
+##### 动静分离
+
