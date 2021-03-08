@@ -993,3 +993,50 @@ location ~/purge(/.*){
 
 ##### 动静分离
 
+所谓的静是指的是静态资源，例如，css，js和图片这样的，提供的是不会改变的资源。
+
+所谓的动指的是jsp，asp这种因为访问者的不同，呈现的内容也是不同的资源。我们通过将静态资源和动态资源剥离来达到更快的访问速度。因为动态资源和静态资源的特点不同，访问的速度也不一样，将动态资源和静态资源分别部署，可以达到提升访问速度、互不影响的目的。
+
+![1615210001809](C:\Users\范凌轩\AppData\Roaming\Typora\typora-user-images\1615210001809.png)
+
+动静分离的配置实现中，也同样需要配置nginx的配置文件，既可以把静态文件放在其他的静态资源服务器上(还可以通过upstream负载)。不同类型的静态资源可以分别转发到不同的服务器。也可以根据客户端类型(浏览器、手机等等)转发到不同的地址。
+
+![1615210183275](C:\Users\范凌轩\AppData\Roaming\Typora\typora-user-images\1615210183275.png)
+
+还有一种简单的做法，就是直接放在nginx‘的服务器上。
+
+```properties
+location ~ .*\.(html|htm|gif|jpg|jpeg|bmp|png|ico|js|css)$ {
+    root /usr/local/soft/nginx/data/static
+}
+```
+
+’比如把JS、PNG、GIF文件放在/usr/local/soft/nginx/data/static 目录下。
+
+然后你在resource/templates创建一个index.html
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Title</title>
+    </head>
+    <body>
+        <div id="pop">
+            
+        </div>
+        <img src="../1.png">
+        <script src="../jquery-3.3.1.js"></script>
+    </body>
+    <script>
+    	$("#pop").html('加载jquery.js成功');
+    </script>
+</html>
+```
+
+关于上述的图片和js在这个springboot项目里是没有的，我们希望他去nginx的中配置好的静态资源下去拿。
+
+首先如果你配置成功了，直接访问nginx的ip地址加上后的资源名是能够访问到的。
+
+`http://xxxx/1.png`和`http://xxxx/jquery.js`，这个时候你直接访问index页面，会发现资源都可以拿到的。当这些静态资源想nginx发起请求的时候，这里我们需要注意一点的是这个时候nginx其实已经反向代理了我们的项目。所以当我们想nginx发起请求的时候，匹配到了png或者js结尾地资源请求，会去静态目录下找，这样就会返回资源。
