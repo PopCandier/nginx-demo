@@ -1040,3 +1040,51 @@ location ~ .*\.(html|htm|gif|jpg|jpeg|bmp|png|ico|js|css)$ {
 首先如果你配置成功了，直接访问nginx的ip地址加上后的资源名是能够访问到的。
 
 `http://xxxx/1.png`和`http://xxxx/jquery.js`，这个时候你直接访问index页面，会发现资源都可以拿到的。当这些静态资源想nginx发起请求的时候，这里我们需要注意一点的是这个时候nginx其实已经反向代理了我们的项目。所以当我们想nginx发起请求的时候，匹配到了png或者js结尾地资源请求，会去静态目录下找，这样就会返回资源。
+
+##### 数据压缩配置
+
+还记得我们安装nginx的时候有一些依赖的模块。
+
+```properties
+yum install -y 
+gcc-c++ pcre pcre-devel 
+zlib zlib-devel <---这个 
+openssl openssl-devel
+```
+
+nginx将这个gzip的压缩进行了包含，也就是nginx是自带gzip的压缩功能的。nginx可以对一些资源进行一定程度上的压缩，例如文本，css，js，图片进行压缩，达到节省带宽的作用，但是这要浏览器是支持解压缩的功能的，不过现在大部分的浏览器基本都是标配这种解压缩的功能了。
+
+但是有些资源是已经进行过压缩了，例如图片和mp3之类的，再进行压缩，压缩效果不怎么理想，且也耗费性能。
+
+```properties
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    
+    # 压缩配置写在这里
+    # 是否开启压缩 on开启 off关闭
+    gzip on;
+    # 支持的http协议
+    gzip_http_version 1.1;
+    # 压缩等级 1-9 等级越高压比例越大，同时消耗性能也越大
+    gzip_comp_level 3;
+    # 需要资源的资源
+    gzip_types text/plain application/json application/javascript application/x-javascript application/css application/xml application/x-httpd-php image/jpeg image/gif
+    image/png
+    
+    server {
+        #...
+    }
+```
+
+| 配置块名称                  | 作用                                                         |
+| --------------------------- | ------------------------------------------------------------ |
+| gzip on\|off;               | 是否开启gzip压缩                                             |
+| gzip_comp_level level       | 压缩等级。由低到高1到9，默认为1。等级越高越消耗CPU资源。设置到3-5之间比较合适。 |
+| gzip_disable "MSIE[1-6]\."; | 针对不同的客户端发起的请求有选择的打开或者关闭gzip命令，后面的浏览器的名称比如禁止IE的gzip功能 |
+| gzip_min_length 1k          | gzip压缩的最小文件，小于设置值将不会压缩                     |
+| gzip_http_version 1.0\|1.1  | 启用压缩功能时，协议的最小版本，默认http/1.1                 |
+| gzip_buffer number size;    | 使用几个缓存空间，每个缓存空间的大小，用于缓存压缩结果，默认 32 4k\|16 8k |
+| gzip_proxied off\|any;      | off为关闭，any为压缩所有后端服务返回的数据，如果有多个nginx服务，就要在中间Nginx开启 |
+| gzip_types mine-type ...;   | 除了text/html外，还对指定的MIME类型启用的响应压缩。          |
+
