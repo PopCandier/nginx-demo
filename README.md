@@ -1310,7 +1310,7 @@ location / {
         proxy_pass http://192.168.44.1:9097;
         add_header 'Access-Control-Allow-Origin' '*';
         add_header 'Access-Control-AllowMethods' 'GET,POST,DELETE,PUT,OPTIONS';
-        add_header 'Access-Control-Allow-Header' 'Content-TYPE,*'
+        add_header 'Access-Control-Allow-Header' 'Content-TYPE,*';
     }
     ```
 
