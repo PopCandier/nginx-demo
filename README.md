@@ -1088,3 +1088,230 @@ http {
 | gzip_proxied off\|any;      | off为关闭，any为压缩所有后端服务返回的数据，如果有多个nginx服务，就要在中间Nginx开启 |
 | gzip_types mine-type ...;   | 除了text/html外，还对指定的MIME类型启用的响应压缩。          |
 
+#### 跨域访问
+
+什么是跨域，什么又是同域。
+
+同域：协议(http,https)、域名、端口都相同。以上三种任意一个不同，就是不同域。
+
+例如。
+
+| 域                                               | 是否同域             |
+| ------------------------------------------------ | -------------------- |
+| http://www.pop.com和https://www.pop.com          | 不同域，因为协议不同 |
+| www.pop.com 和www.pop.net                        | 不同域，因为域名不同 |
+| wiki.pop.com和bbs.pop.com                        | 不同域，子域名不同   |
+| http://www.pop.com:2673和http://www.pop.com:2674 | 不同于，端口不同     |
+| www.pop.com/index和www.pop.com/bbs               | 同域                 |
+
+同源策略(Same-Origin Policy)：在浏览器中，一个域的文档或者他自己的脚本，不允许和另一个域的资源进行交互。
+
+同源策略是浏览器保护用户的操作，防止第三方网站请求拿到返回的数据，比如cookie和请求的返回结果，起到保护服务器资源的作用。
+
+比如骗子做了一个和中国银行一样的网站，你输入信息按下提交以后，他会代替你向真正的官网的脚本，提交数据。官网返回数据后，可以被诈骗网站获取，因为请求是诈骗网站获取的。
+
+如果有同源策略，诈骗网站就无法显示数据。
+
+![1615473399854](./img/1615473399854.png)
+
+那么为什么，跨域的请求会出现问题，同源策略到底是哪一步起到的作用。其实问题在于不是跨域的请求无法请求服务器，而是请求确实完成后了，且返回了，但是被浏览器拦截下来，所以你也没法看到回显。他不允许第一个域（origin）获取第二个域的返回内容。
+
+为此我们需要用到三个服务：
+
+```
+Nginx服务 ： 192.168.44.181：80
+Tomcat1：    192.168.44.1：9096
+Tomcat2：	192.168.44.1：9097 (被nginx代理)
+```
+
+很明显，tomcat1和tomcat2是不同域的，所以如果tomcat1去请求tomcat2的资源就会出现跨域问题。
+
+![1615474062988](./img/1615474062988.png)
+
+也就意味着`44.1：9096`访问`44.181：80`跨域。
+
+首先我们在nginx反向代理tomcat2
+
+```properties
+location / {
+    proxy_pass http://192.168.44.1:9097;
+}
+```
+
+我们将nginx的所有请求发送给tomcat2。
+
+首先，浏览器直接访问9097的 tomcat2是肯定可以成功的，因为同域，自己请求自己是没有什么问题的 `http://192.168.44.1:9097/time/query`或者我们请求nginx的地址，也是完全没问题的。`http://192.168.44.181/time/query`。
+
+如果我们访问9096的tomcat1，在让tomcat1去请求9097的tomcat2的数据，就会出现跨域的问题。
+
+由此，我们可以在9096的tomcat1上建立一个页面，在这个页面中我们回去请求tomcat2的数据，或者nginx的数据，nginx会帮我们转发到9097的tomcat2服务上去。来模拟跨域。
+
+```javascript
+<script type="text/javascript">
+    $(document).ready(function(){
+    $.ajax({
+        type:"GET",
+        url:"http://192.168.44.181/time/query",
+        success:function(data){
+            alert('跨域成功');
+        },
+        error:function(){
+            alert('跨域失败');
+        }
+    });
+	});
+</script>
+```
+
+当我们这样操作的时候，会提示跨域失败，浏览器会出现失败字样，因为浏览器不允许我们执行跨域请求。
+
+![1615474648704](./img/1615474648704.png)
+
+不过有些时候，我们是希望浏览器能够自己运行的js可以访问其他网站资源，比如网站嵌套微博个人签名，播放器，天气预报等。
+
+浏览器里面出现地`CORS`字样，全程Cross-Origin Resource Sharing（跨域资源共享），其实就是一种解决同源策略限制的方法，只需要在被跨域的请求的服务器响应头添加`Access-Control-Allow-Origin`，允许origin访问就可以了。
+
+###### 跨域解决方法
+
+* **修改浏览器设置**
+
+  * 自己百度，chrome跨域和Firefox跨域不一样。虽然修改浏览器可以解决，但是不可能要求所有用户都去改。
+
+* **前端改为JSONP请求**
+
+  * 也就是修改前端代码的请求方式，因为script标签的src、img的src以及link标签的href，是不会受到同源限制的。src或href链接的静态资源，本质上就是一个get请求，JSONP就利用这一点。当然，**这也决定了JSONP只能解决get的跨域问题。**
+
+  * ![1615475155899](./img/1615475155899.png)
+
+  * Jquery对JSONP的方法进行了封装。所以我们修改之前的请求。
+
+    ```javascript
+    <script type="text/javascript">
+        $(document).ready(function(){
+        $.ajax({
+            type:"GET",
+            dataType:"JSONP",
+            jsonp:"callback",
+            jsonpCallback:"successCallback",
+            url:"http://192.168.44.181/time/query",
+            success:function(data){
+                alert('跨域成功');
+            },
+            error:function(){
+                alert('跨域失败');
+            }
+        });
+    	});
+    </script>
+    ```
+
+  * 同时，请求的那个地址的返回值也要修改，返回数据必须用callback方法名字+括号括起来。
+
+    ```java
+    return "successCallback("+json.toJSONString()+")";
+    ```
+
+* **修改目标服务器后端代码**
+
+  * 浏览器的浏览器策略之所以会拦截跨域而来的数据，是因为那些数据并没有携带通行证，也就是之前说的CORS，只要我们给响应头添加上这个，就被放行。
+
+  * ![1615475674213](./img/1615475674213.png)
+
+  * 我们可以在SpringBoot项目中，在请求的方法或者类上加上注解。
+
+    ```java
+    @CrossOrign
+    @ResponseBody
+    @RequestMapping("time/query")
+    public String time(HttpServletResponse response)
+    {
+        //.....
+    }
+    ```
+
+  * 当然，在类上加的效果，就是下面的所有请求，HTTP响应头都会带上CORS，那么效果就是会添加以下字段。
+
+  * ```http
+    "Access-Control-Allow-Origin":"*" ->匹配所有的域
+    "Access-Control-Allow-Methods":"GET,POST,PUT,OPTIONS"
+    "Access-Control-Allow-Credentials":"true"
+    ```
+
+  * 如果需要加注解的地方比较多，你可以添加配置或者拦截器
+
+  * ```java
+    @Configuration
+    public class CORSConfiguration {
+        public WebMvcConfigurer corsConfigurer(){
+            return new WebMvcConfigurerAdapter(){
+                @Override
+                public void addCorsMappings(CorsRegistry registry)
+                {
+                    registry.addMapping("/**")
+                        //当然，你也可以指定特定的域，例如你只允许
+                        //http://192.168.44.181这个域访问
+                        .allowedOrigins("*")
+                        .allowedMethods("GET","POST","DELETE","PUT","OPTIONS")
+                        .allowCredentials(false).maxAge(3600);
+                }
+            };
+        }
+    }
+    ```
+
+  * 这里需要注意的是，**如果你使用了这个拦截器的方式配置，那么请将之前的@CrossOrigin的注解注释掉**，不然会跨域失败，你会发现响应头会有重复的CORS。
+
+* **Nginx代理设置**
+
+  * 既然两个tomcat不同域，我让这两个tomcat同域不就行了，通过让nginx同时反向代理这两天服务器，请求发送给nginx，然后nginx帮忙转发，就不存在跨域的问题了。
+
+  * ```properties
+    server {
+        listen 7298;
+        server_name localhost;
+        
+        location / {
+            proxy_pass http://192.168.44.1:9096;
+        }
+        
+        localtion /time/ {
+            proxy_pass http://192.168.44.1:9097;
+        }
+    }
+    ```
+
+  * ![1615476638349](./img/1615476638349.png)
+
+  * 这样，我们直接访问就不会有跨域问题。
+
+    ```javascript
+    <script type="text/javascript">
+        $(document).ready(function(){
+        $.ajax({
+            type:"GET",
+            url:"http://192.168.44.181:7298/time/query",
+            success:function(data){
+                alert('跨域成功');
+            },
+            error:function(){
+                alert('跨域失败');
+            }
+        });
+    	});
+    </script>
+    ```
+
+* **在nginx转发的时候，添加CORS头信息。**
+
+  * 如果解决的跨域地方比较多，很显然我们需要反向代理很多服务器，配置项还是会有点多的，所以在Nginx中设置第二种方法，在Ningx返回浏览器的时候，添加Access-Control-Allow-Origini头信息，告诉浏览器，他请求的源站是支持接收来自其他地址的数据的。
+
+  * ```properties
+    location / {
+        proxy_pass http://192.168.44.1:9097;
+        add_header 'Access-Control-Allow-Origin' '*';
+        add_header 'Access-Control-AllowMethods' 'GET,POST,DELETE,PUT,OPTIONS';
+        add_header 'Access-Control-Allow-Header' 'Content-TYPE,*'
+    }
+    ```
+
+  * 同时，使用这个方法，**请注释掉CORSConfiguration和@CrossOrigin**。
